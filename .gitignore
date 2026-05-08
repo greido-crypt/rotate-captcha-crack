@@ -29,4 +29,6 @@
 !models
 !models/**
 
+!GUIDE.docx
+
 __pycache__
