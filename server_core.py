@@ -35,7 +35,19 @@ cls_num     = DEFAULT_CLS_NUM
 # ── Runtime path helper (works both frozen PyInstaller and plain Python) ──────
 
 def _base_dir() -> Path:
+    """
+    Returns the directory that contains the 'models' folder.
+
+    PyInstaller ≥6 puts bundled data inside _internal/ (sys._MEIPASS).
+    Older versions and plain-Python runs use the directory of the script/exe.
+    We check both so the same binary works regardless of PyInstaller version.
+    """
     if getattr(sys, "frozen", False):
+        # PyInstaller 6.x: data lives in _internal/ (sys._MEIPASS)
+        meipass = Path(getattr(sys, "_MEIPASS", ""))
+        if (meipass / "models").exists():
+            return meipass
+        # Older PyInstaller or manually placed models folder beside the exe
         return Path(sys.executable).parent
     return Path(__file__).parent
 
@@ -102,11 +114,21 @@ def _load_quant_model(index: int, log: Callable[[str], None]):
     m = QuantRotNetR(cls_num=cls_num, train=False)
     m.eval()
     m.qconfig = torch.ao.quantization.get_default_qat_qconfig("x86")
-    m = torch.ao.quantization.fuse_modules(m, [["conv", "bn", "relu"]])
+    # Note: fuse_modules([["conv","bn","relu"]]) is NOT called here —
+    # QuantRotNetR wraps RegNet whose conv/bn/relu are nested deep inside
+    # backbone, not at top level. fuse_modules would raise AttributeError.
+    # The quant.pth produced by quant_RotNetR.py must be saved without fusion too.
     m = torch.ao.quantization.prepare_qat(m.train())
     m = torch.ao.quantization.convert(m)
 
     model_path = WhereIsMyModel(QuantRotNetR(cls_num=cls_num, train=False)).with_index(index).model_dir / "quant.pth"
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"quant.pth not found at {model_path}\n"
+            "Run quant_RotNetR.py first to generate the quantized model."
+        )
+
     log(f"INFO: loading weights from {model_path}")
 
     m.load_state_dict(torch.load(model_path, map_location="cpu", weights_only=True))
