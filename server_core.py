@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from rotate_captcha_crack import const as _rcc_const
 from rotate_captcha_crack.const import DEFAULT_CLS_NUM
-from rotate_captcha_crack.model import QuantRotNetR, RotNetR, WhereIsMyModel
+from rotate_captcha_crack.model import RotNetR, WhereIsMyModel
 from rotate_captcha_crack.utils import process_captcha
 
 MAX_BATCH   = 4
@@ -33,32 +33,26 @@ MAX_WAIT_MS = 30
 cls_num     = DEFAULT_CLS_NUM
 
 
-# ── Runtime path helper (works both frozen PyInstaller and plain Python) ──────
+# ── Runtime path helper ───────────────────────────────────────────────────────
 
 def _base_dir() -> Path:
     """
-    Returns the directory that contains the 'models' folder.
-
+    Returns directory that contains the 'models' folder.
     PyInstaller ≥6 puts bundled data inside _internal/ (sys._MEIPASS).
-    Older versions and plain-Python runs use the directory of the script/exe.
-    We check both so the same binary works regardless of PyInstaller version.
     """
     if getattr(sys, "frozen", False):
-        # PyInstaller 6.x: data lives in _internal/ (sys._MEIPASS)
         meipass = Path(getattr(sys, "_MEIPASS", ""))
         if (meipass / "models").exists():
             return meipass
-        # Older PyInstaller or manually placed models folder beside the exe
         return Path(sys.executable).parent
     return Path(__file__).parent
 
 
-# Patch MODELS_DIR so WhereIsMyModel resolves correctly
-# whether run as plain Python or frozen EXE
+# Patch MODELS_DIR so WhereIsMyModel resolves correctly everywhere
 _rcc_const.MODELS_DIR = str(_base_dir() / "models")
 
 
-# ── Logging handler that routes to a callback ─────────────────────────────────
+# ── Logging handler that routes records to a callback ─────────────────────────
 
 class _CallbackHandler(logging.Handler):
     def __init__(self, cb: Callable[[str], None]):
@@ -72,7 +66,23 @@ class _CallbackHandler(logging.Handler):
             pass
 
 
-# ── Model loaders ─────────────────────────────────────────────────────────────
+# ── Image saving ──────────────────────────────────────────────────────────────
+
+def _save_pair(img_bytes: bytes, angle_deg: float, save_dir: Path) -> None:
+    """Save input image and solved (rotated) image as a named pair."""
+    try:
+        uid = f"{int(time.time() * 1000)}"
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img.save(save_dir / f"{uid}_input.png")
+        # rotate(-angle) recovers original orientation (per model convention)
+        img.rotate(-angle_deg, expand=True).save(
+            save_dir / f"{uid}_solved_{angle_deg:.1f}deg.png"
+        )
+    except Exception:
+        pass   # never crash the inference on save failure
+
+
+# ── Model loader ──────────────────────────────────────────────────────────────
 
 def _load_fp32_model(index: int, use_cpu: bool, log: Callable[[str], None]):
     from rotate_captcha_crack.common import device as cuda_device
@@ -110,51 +120,19 @@ def _load_fp32_model(index: int, use_cpu: bool, log: Callable[[str], None]):
     return m, target
 
 
-def _load_quant_model(index: int, log: Callable[[str], None]):
-    log("INFO: building quantized model skeleton…")
-    m = QuantRotNetR(cls_num=cls_num, train=False)
-    m.eval()
-    m.qconfig = torch.ao.quantization.get_default_qat_qconfig("x86")
-    # Note: fuse_modules([["conv","bn","relu"]]) is NOT called here —
-    # QuantRotNetR wraps RegNet whose conv/bn/relu are nested deep inside
-    # backbone, not at top level. fuse_modules would raise AttributeError.
-    # The quant.pth produced by quant_RotNetR.py must be saved without fusion too.
-    m = torch.ao.quantization.prepare_qat(m.train())
-    m = torch.ao.quantization.convert(m)
-
-    model_path = WhereIsMyModel(QuantRotNetR(cls_num=cls_num, train=False)).with_index(index).model_dir / "quant.pth"
-
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"quant.pth not found at {model_path}\n"
-            "Run quant_RotNetR.py first to generate the quantized model."
-        )
-
-    log(f"INFO: loading weights from {model_path}")
-
-    m.load_state_dict(torch.load(model_path, map_location="cpu", weights_only=True))
-    m.eval()
-
-    with torch.inference_mode():
-        m(torch.zeros(1, 3, 224, 224))
-
-    return m, torch.device("cpu")
-
-
 # ── ServerManager ─────────────────────────────────────────────────────────────
 
 class ServerManager:
-    """
-    Manages the full lifecycle of the inference server.
-    Thread-safe: start/stop can be called from any thread (e.g. GUI).
-    """
+    """Manages the full lifecycle of the inference server."""
 
     def __init__(self):
-        self._server:  Optional[uvicorn.Server] = None
-        self._thread:  Optional[threading.Thread] = None
-        self._log_cb:  Optional[Callable[[str], None]] = None
+        self._server:   Optional[uvicorn.Server] = None
+        self._thread:   Optional[threading.Thread] = None
+        self._log_cb:   Optional[Callable[[str], None]] = None
         self._cpu_pool: Optional[ThreadPoolExecutor] = None
+        self._log_handler: Optional[_CallbackHandler] = None
         self.request_count = 0
+        self.save_dir: Optional[Path] = None
         self._lock = threading.Lock()
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -163,11 +141,7 @@ class ServerManager:
         self._log_cb = cb
 
     def start(self, mode: str = "gpu", port: int = 4396, index: int = -1):
-        """
-        mode: 'gpu' | 'cpu' | 'quant'
-        Blocks until the server is ready (or raises on error).
-        Call from a background thread to avoid blocking the GUI.
-        """
+        """mode: 'gpu' | 'cpu'. Blocks until server is up (call from background thread)."""
         with self._lock:
             if self.is_running:
                 raise RuntimeError("Server is already running")
@@ -176,11 +150,7 @@ class ServerManager:
         self._log(f"INFO: starting server  mode={mode}  port={port}")
         self.request_count = 0
 
-        # Load model
-        if mode == "quant":
-            self._log("INFO: loading INT8 quantized model (CPU)…")
-            model, infer_device = _load_quant_model(index, self._log)
-        elif mode == "cpu":
+        if mode == "cpu":
             self._log("INFO: loading FP32 model (CPU)…")
             model, infer_device = _load_fp32_model(index, use_cpu=True,  log=self._log)
         else:
@@ -189,56 +159,39 @@ class ServerManager:
 
         self._log("INFO: model ready ✓")
 
-        # Build FastAPI app
         self._cpu_pool = ThreadPoolExecutor(
             max_workers=os.cpu_count(), thread_name_prefix="preproc"
         )
         fastapi_app = self._build_app(model, infer_device)
 
-        # ── Logging: disable uvicorn's own config, attach our callback handler ──
-        # log_config=None prevents uvicorn from calling logging.config.dictConfig()
-        # which would conflict with handlers we add manually and cause
-        # "Unable to configure formatter 'default'" errors.
+        # Attach callback handler to uvicorn loggers (suppress default config)
+        fmt = logging.Formatter("%(levelname)s  %(message)s")
+        handler = _CallbackHandler(self._log)
+        handler.setFormatter(fmt)
+        self._log_handler = handler
+        for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+            lg = logging.getLogger(name)
+            lg.handlers.clear()
+            lg.addHandler(handler)
+            lg.setLevel(logging.INFO)
+            lg.propagate = False
+
+        # minimal log_config so uvicorn doesn't try to reconfigure loggers
+        _silent_log_cfg = {"version": 1, "disable_existing_loggers": False}
+
         config = uvicorn.Config(
             fastapi_app,
             host="0.0.0.0",
             port=port,
             log_level="info",
             access_log=True,
-            log_config=None,
+            log_config=_silent_log_cfg,
         )
-
-        fmt = logging.Formatter("%(levelname)s: %(message)s")
-        handler = _CallbackHandler(self._log)
-        handler.setFormatter(fmt)
-        for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
-            lg = logging.getLogger(name)
-            if not any(isinstance(h, _CallbackHandler) for h in lg.handlers):
-                lg.addHandler(handler)
-            lg.setLevel(logging.INFO)
-            lg.propagate = False
-
-        # ── Start uvicorn and wait until it is actually ready ─────────────────
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
-
-        # Block until server.started flag is set (uvicorn sets it after bind)
-        # or until the thread dies (startup error).
-        for _ in range(150):           # 15 second timeout
-            if self._server.started:
-                break
-            if not self._thread.is_alive():
-                raise RuntimeError(
-                    f"Server thread exited unexpectedly on port {port}. "
-                    "Port may already be in use."
-                )
-            time.sleep(0.1)
-        else:
-            raise RuntimeError("Server failed to start within 15 seconds")
-
         self._log(f"INFO: listening on http://0.0.0.0:{port}")
-        self._log(f"INFO: swagger UI → http://127.0.0.1:{port}/docs")
+        self._log(f"INFO: swagger → http://127.0.0.1:{port}/docs")
 
     def stop(self):
         with self._lock:
@@ -246,9 +199,21 @@ class ServerManager:
                 return
             self._server.should_exit = True
 
-        self._thread.join(timeout=10)
+        # Give uvicorn 3s to stop gracefully, then force-exit
+        self._thread.join(timeout=3)
+        if self._thread.is_alive():
+            self._server.force_exit = True
+            self._thread.join(timeout=5)
+
+        # Clean up
         if self._cpu_pool:
             self._cpu_pool.shutdown(wait=False)
+            self._cpu_pool = None
+        if self._log_handler:
+            for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+                logging.getLogger(name).removeHandler(self._log_handler)
+            self._log_handler = None
+
         self._server = None
         self._thread = None
         self._log("INFO: server stopped")
@@ -257,17 +222,16 @@ class ServerManager:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    # ── GPU info (static, no model needed) ───────────────────────────────────
-
     @staticmethod
     def gpu_info() -> dict:
         if not torch.cuda.is_available():
             return {"available": False}
-        idx  = torch.cuda.current_device()
-        name = torch.cuda.get_device_name(idx)
-        total = torch.cuda.get_device_properties(idx).total_memory / 1024**3
-        used  = torch.cuda.memory_allocated(idx) / 1024**3
-        return {"available": True, "name": name, "total_gb": round(total, 1), "used_gb": round(used, 2)}
+        idx   = torch.cuda.current_device()
+        name  = torch.cuda.get_device_name(idx)
+        total = torch.cuda.get_device_properties(idx).total_memory / 1024 ** 3
+        used  = torch.cuda.memory_allocated(idx) / 1024 ** 3
+        return {"available": True, "name": name,
+                "total_gb": round(total, 1), "used_gb": round(used, 2)}
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -276,10 +240,10 @@ class ServerManager:
             self._log_cb(msg)
 
     def _build_app(self, model, infer_device) -> FastAPI:
-        queue: asyncio.Queue = asyncio.Queue()
-        cpu_pool = self._cpu_pool
+        queue:       asyncio.Queue = asyncio.Queue()
+        cpu_pool     = self._cpu_pool
         use_autocast = (infer_device.type == "cuda")
-        mgr = self   # reference for request counter
+        mgr          = self
 
         @asynccontextmanager
         async def lifespan(_app: FastAPI):
@@ -289,18 +253,17 @@ class ServerManager:
 
         app = FastAPI(title="rotate-captcha-crack", lifespan=lifespan)
 
-        # ── Request counter middleware ──
         @app.middleware("http")
         async def _count(request: Request, call_next):
             mgr.request_count += 1
             return await call_next(request)
 
-        # ── Batcher ──
         async def _batcher():
             loop = asyncio.get_running_loop()
             while True:
                 first = await queue.get()
-                batch = [first]
+                batch: list[tuple[bytes, asyncio.Future]] = [first]
+
                 deadline = loop.time() + MAX_WAIT_MS / 1000
                 while len(batch) < MAX_BATCH:
                     remaining = deadline - loop.time()
@@ -312,38 +275,49 @@ class ServerManager:
                     except asyncio.TimeoutError:
                         break
 
+                # Preprocess (CPU, parallel)
                 futs_pre = [
-                    loop.run_in_executor(cpu_pool, _preprocess, img_bytes)
-                    for img_bytes, _ in batch
+                    loop.run_in_executor(cpu_pool, _preprocess, raw)
+                    for raw, _ in batch
                 ]
                 results = await asyncio.gather(*futs_pre, return_exceptions=True)
 
-                valid = []
-                for (_, fut), res in zip(batch, results):
+                # Separate errors from valid; keep raw bytes for saving
+                valid: list[tuple[bytes, torch.Tensor, asyncio.Future]] = []
+                for (raw, fut), res in zip(batch, results):
                     if isinstance(res, Exception):
                         fut.set_exception(res)
                     else:
-                        valid.append((res, fut))
+                        valid.append((raw, res, fut))
 
                 if not valid:
                     continue
 
+                # GPU inference
                 try:
-                    batch_ts = torch.stack([t for t, _ in valid]).to(device=infer_device)
+                    batch_ts = torch.stack([t for _, t, _ in valid]).to(device=infer_device)
                     with torch.inference_mode():
                         if use_autocast:
                             with torch.autocast(device_type="cuda", dtype=torch.float16):
                                 logits = model(batch_ts)
                         else:
                             logits = model(batch_ts)
-                    for angle_idx, (_, fut) in zip(logits.argmax(dim=1).tolist(), valid):
-                        fut.set_result(angle_idx / cls_num * 360)
+                    angles = logits.argmax(dim=1).tolist()
+
+                    for angle_idx, (raw, _, fut) in zip(angles, valid):
+                        angle_deg = angle_idx / cls_num * 360
+                        fut.set_result(angle_deg)
+                        # Save pair if save_dir is configured
+                        if mgr.save_dir:
+                            loop.run_in_executor(
+                                cpu_pool, _save_pair, raw, angle_deg, mgr.save_dir
+                            )
+
                 except Exception as exc:
-                    for _, fut in valid:
+                    for _, _, fut in valid:
                         if not fut.done():
                             fut.set_exception(exc)
 
-        # ── Helpers ──
         def _preprocess(img_bytes: bytes) -> torch.Tensor:
             return process_captcha(Image.open(io.BytesIO(img_bytes)))
 
@@ -360,7 +334,6 @@ class ServerManager:
                 return _err(1, str(exc))
             return JSONResponse({"err": {"code": 0}, "pred": pred})
 
-        # ── Routes ──
         class InferRequest(BaseModel):
             image_base64: str
 

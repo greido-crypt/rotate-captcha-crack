@@ -23,6 +23,8 @@ datas += [("models", "models")]
 # ── Hidden imports ────────────────────────────────────────────────────────────
 
 hiddenimports = [
+    # psutil (CPU monitoring)
+    "psutil",
     # FastAPI / uvicorn internals
     "uvicorn.logging",
     "uvicorn.loops",
@@ -85,12 +87,20 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Exclude training-only heavy deps
+        # Training-only — not needed for inference
         "matplotlib",
+        "tqdm",
         "IPython",
         "jupyter",
         "notebook",
         "pytest",
+        # Training modules inside rotate_captcha_crack package
+        "rotate_captcha_crack.criterion",
+        "rotate_captcha_crack.loss",
+        "rotate_captcha_crack.lr",
+        "rotate_captcha_crack.trainer",
+        "rotate_captcha_crack.visualizer",
+        "rotate_captcha_crack.dataset",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
