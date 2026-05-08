@@ -22,6 +22,10 @@
 !quant_RotNetR.py
 !test_captcha.py
 !server.py
+!server_core.py
+!gui_app.py
+!gui.spec
+!build.bat
 
 !src
 !src/**
