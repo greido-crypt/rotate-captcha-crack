@@ -304,6 +304,12 @@ class App(ctk.CTk):
         except queue.Empty:
             pass
 
+        # Detect unexpected server crash (was running, now not)
+        if getattr(self, "_was_running", False) and not self._mgr.is_running:
+            self._set_state("stopped")
+            self._append_log("[WARN]  Server stopped unexpectedly")
+        self._was_running = self._mgr.is_running
+
         # Update stats
         if self._mgr.is_running:
             self._req_lbl.configure(text=str(self._mgr.request_count))

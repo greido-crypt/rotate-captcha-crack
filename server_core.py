@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -194,26 +195,48 @@ class ServerManager:
         )
         fastapi_app = self._build_app(model, infer_device)
 
-        # Attach log handler to uvicorn loggers
-        fmt = logging.Formatter("%(levelname)s: %(message)s")
-        handler = _CallbackHandler(self._log)
-        handler.setFormatter(fmt)
-        for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
-            lg = logging.getLogger(name)
-            lg.addHandler(handler)
-            lg.propagate = False
-
-        # Start uvicorn
+        # ── Logging: disable uvicorn's own config, attach our callback handler ──
+        # log_config=None prevents uvicorn from calling logging.config.dictConfig()
+        # which would conflict with handlers we add manually and cause
+        # "Unable to configure formatter 'default'" errors.
         config = uvicorn.Config(
             fastapi_app,
             host="0.0.0.0",
             port=port,
             log_level="info",
             access_log=True,
+            log_config=None,
         )
+
+        fmt = logging.Formatter("%(levelname)s: %(message)s")
+        handler = _CallbackHandler(self._log)
+        handler.setFormatter(fmt)
+        for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+            lg = logging.getLogger(name)
+            if not any(isinstance(h, _CallbackHandler) for h in lg.handlers):
+                lg.addHandler(handler)
+            lg.setLevel(logging.INFO)
+            lg.propagate = False
+
+        # ── Start uvicorn and wait until it is actually ready ─────────────────
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
+
+        # Block until server.started flag is set (uvicorn sets it after bind)
+        # or until the thread dies (startup error).
+        for _ in range(150):           # 15 second timeout
+            if self._server.started:
+                break
+            if not self._thread.is_alive():
+                raise RuntimeError(
+                    f"Server thread exited unexpectedly on port {port}. "
+                    "Port may already be in use."
+                )
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("Server failed to start within 15 seconds")
+
         self._log(f"INFO: listening on http://0.0.0.0:{port}")
         self._log(f"INFO: swagger UI → http://127.0.0.1:{port}/docs")
 
