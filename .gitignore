@@ -1,11 +1,17 @@
 *
 
 !.gitignore
+!.gitattributes
+!.dockerignore
 !LICENSE
 !README.md
 !README_zh-cn.md
 
 !pyproject.toml
+!uv.lock
+
+!Dockerfile
+!docker-compose.yml
 
 !train_RCCNet.py
 !train_RotNet.py
@@ -19,5 +25,8 @@
 
 !src
 !src/**
+
+!models
+!models/**
 
 __pycache__

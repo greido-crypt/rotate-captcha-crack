@@ -1,0 +1,29 @@
+# Виртуальное окружение — пересоздаётся внутри образа
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Python кеш
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Логи и отладка
+log/
+test_images/
+
+# Тренировочные скрипты (не нужны в production)
+train_*.py
+test_*.py
+quant_RotNetR.py
+
+# Модели — монтируются как volume, не копируются в образ
+models/
+
+# IDE
+.vscode/
+.idea/

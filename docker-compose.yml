@@ -1,0 +1,60 @@
+services:
+
+  # ── GPU-режим (основной) ──────────────────────────────────────────────────
+  rotate-captcha:
+    build: .
+    image: rotate-captcha-crack:latest
+    container_name: rotate-captcha
+    ports:
+      - "4396:4396"
+    volumes:
+      # Модели хранятся на хосте — образ не нужно пересобирать при смене весов
+      - ./models:/app/models:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-sf", "http://localhost:4396/docs" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s   # время на warmup + torch.compile
+
+  # ── CPU FP32-режим (--cpu, GPU не нужен) ────────────────────────────────
+  rotate-captcha-cpu:
+    build: .
+    image: rotate-captcha-crack:latest
+    container_name: rotate-captcha-cpu
+    ports:
+      - "4397:4396"
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: [ "python", "server.py", "--cpu" ]
+    restart: unless-stopped
+    profiles:
+      - cpu     # docker compose --profile cpu up
+
+  # ── CPU INT8-режим (--quant, самый лёгкий) ───────────────────────────────
+  rotate-captcha-quant:
+    build: .
+    image: rotate-captcha-crack:latest
+    container_name: rotate-captcha-quant
+    ports:
+      - "4398:4396"
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: [ "python", "server.py", "--quant" ]
+    restart: unless-stopped
+    profiles:
+      - quant   # docker compose --profile quant up
