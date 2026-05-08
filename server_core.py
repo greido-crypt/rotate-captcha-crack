@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel
 
+from rotate_captcha_crack import const as _rcc_const
 from rotate_captcha_crack.const import DEFAULT_CLS_NUM
 from rotate_captcha_crack.model import QuantRotNetR, RotNetR, WhereIsMyModel
 from rotate_captcha_crack.utils import process_captcha
@@ -37,6 +38,11 @@ def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent
+
+
+# Patch MODELS_DIR so WhereIsMyModel resolves correctly
+# whether run as plain Python or frozen EXE
+_rcc_const.MODELS_DIR = str(_base_dir() / "models")
 
 
 # ── Logging handler that routes to a callback ─────────────────────────────────
@@ -62,9 +68,7 @@ def _load_fp32_model(index: int, use_cpu: bool, log: Callable[[str], None]):
     log(f"INFO: target device → {target}")
 
     m = RotNetR(cls_num=cls_num, train=False)
-    finder = WhereIsMyModel(m)
-    finder._model_dir_root = _base_dir() / "models"   # runtime path override
-    model_path = finder.with_index(index).model_dir / "best.pth"
+    model_path = WhereIsMyModel(m).with_index(index).model_dir / "best.pth"
     log(f"INFO: loading weights from {model_path}")
 
     m.load_state_dict(torch.load(model_path, map_location=target, weights_only=True))
@@ -102,9 +106,7 @@ def _load_quant_model(index: int, log: Callable[[str], None]):
     m = torch.ao.quantization.prepare_qat(m.train())
     m = torch.ao.quantization.convert(m)
 
-    finder = WhereIsMyModel(QuantRotNetR(cls_num=cls_num, train=False))
-    finder._model_dir_root = _base_dir() / "models"
-    model_path = finder.with_index(index).model_dir / "quant.pth"
+    model_path = WhereIsMyModel(QuantRotNetR(cls_num=cls_num, train=False)).with_index(index).model_dir / "quant.pth"
     log(f"INFO: loading weights from {model_path}")
 
     m.load_state_dict(torch.load(model_path, map_location="cpu", weights_only=True))

@@ -74,7 +74,8 @@ class App(ctk.CTk):
         # ── Left sidebar ──────────────────────────────────────────────────────
         sidebar = ctk.CTkFrame(self, width=260, fg_color=CLR_PANEL, corner_radius=0)
         sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_rowconfigure(99, weight=1)   # push stats to bottom
+        sidebar.grid_columnconfigure(0, weight=1)   # ← items stretch to full width
+        sidebar.grid_rowconfigure(99, weight=1)     # ← spacer before stats block
         sidebar.grid_propagate(False)
 
         row = 0
@@ -82,39 +83,39 @@ class App(ctk.CTk):
         # Logo / title
         ctk.CTkLabel(
             sidebar, text="⚡ Neural API Server",
-            font=ctk.CTkFont(size=16, weight="bold"), text_color=CLR_TEXT
-        ).grid(row=row, column=0, padx=20, pady=(20, 4), sticky="w"); row += 1
+            font=ctk.CTkFont(size=15, weight="bold"), text_color=CLR_TEXT
+        ).grid(row=row, column=0, padx=16, pady=(14, 2), sticky="w"); row += 1
 
         ctk.CTkLabel(
             sidebar, text="rotate-captcha-crack",
-            font=ctk.CTkFont(size=11), text_color=CLR_MUTED
-        ).grid(row=row, column=0, padx=20, pady=(0, 16), sticky="w"); row += 1
+            font=ctk.CTkFont(size=10), text_color=CLR_MUTED
+        ).grid(row=row, column=0, padx=16, pady=(0, 10), sticky="w"); row += 1
 
         self._sep(sidebar, row); row += 1
 
         # Status indicator
         ctk.CTkLabel(
-            sidebar, text="СТАТУС", font=ctk.CTkFont(size=10, weight="bold"),
+            sidebar, text="СТАТУС", font=ctk.CTkFont(size=9, weight="bold"),
             text_color=CLR_MUTED
-        ).grid(row=row, column=0, padx=20, pady=(12, 2), sticky="w"); row += 1
+        ).grid(row=row, column=0, padx=16, pady=(8, 2), sticky="w"); row += 1
 
         status_row = ctk.CTkFrame(sidebar, fg_color="transparent")
-        status_row.grid(row=row, column=0, padx=20, pady=(0, 12), sticky="w"); row += 1
+        status_row.grid(row=row, column=0, padx=16, pady=(0, 8), sticky="w"); row += 1
 
-        self._dot = ctk.CTkLabel(status_row, text="●", font=ctk.CTkFont(size=18),
+        self._dot = ctk.CTkLabel(status_row, text="●", font=ctk.CTkFont(size=16),
                                   text_color=CLR_RED)
-        self._dot.pack(side="left", padx=(0, 8))
+        self._dot.pack(side="left", padx=(0, 6))
         self._status_lbl = ctk.CTkLabel(status_row, text="Остановлен",
-                                         font=ctk.CTkFont(size=13), text_color=CLR_TEXT)
+                                         font=ctk.CTkFont(size=12), text_color=CLR_TEXT)
         self._status_lbl.pack(side="left")
 
         self._sep(sidebar, row); row += 1
 
         # Mode selection
         ctk.CTkLabel(
-            sidebar, text="РЕЖИМ", font=ctk.CTkFont(size=10, weight="bold"),
+            sidebar, text="РЕЖИМ", font=ctk.CTkFont(size=9, weight="bold"),
             text_color=CLR_MUTED
-        ).grid(row=row, column=0, padx=20, pady=(12, 4), sticky="w"); row += 1
+        ).grid(row=row, column=0, padx=16, pady=(8, 2), sticky="w"); row += 1
 
         self._mode_var = ctk.StringVar(value="gpu")
         modes = [("GPU  FP16  (быстрый)", "gpu"),
@@ -123,11 +124,10 @@ class App(ctk.CTk):
         for label, val in modes:
             ctk.CTkRadioButton(
                 sidebar, text=label, variable=self._mode_var, value=val,
-                font=ctk.CTkFont(size=12), text_color=CLR_TEXT,
+                font=ctk.CTkFont(size=11), text_color=CLR_TEXT,
                 fg_color=CLR_BLUE, hover_color=CLR_BLUE,
-            ).grid(row=row, column=0, padx=24, pady=3, sticky="w"); row += 1
+            ).grid(row=row, column=0, padx=20, pady=2, sticky="w"); row += 1
 
-        # Disable GPU option if CUDA unavailable
         if not torch.cuda.is_available():
             self._mode_var.set("cpu")
 
@@ -135,54 +135,54 @@ class App(ctk.CTk):
 
         # Port
         ctk.CTkLabel(
-            sidebar, text="ПОРТ", font=ctk.CTkFont(size=10, weight="bold"),
+            sidebar, text="ПОРТ", font=ctk.CTkFont(size=9, weight="bold"),
             text_color=CLR_MUTED
-        ).grid(row=row, column=0, padx=20, pady=(12, 4), sticky="w"); row += 1
+        ).grid(row=row, column=0, padx=16, pady=(8, 2), sticky="w"); row += 1
 
         self._port_var = ctk.StringVar(value="4396")
         ctk.CTkEntry(
-            sidebar, textvariable=self._port_var, width=120,
-            font=ctk.CTkFont(size=13), fg_color=CLR_CARD, border_color=CLR_BORDER,
-        ).grid(row=row, column=0, padx=20, pady=(0, 12), sticky="w"); row += 1
+            sidebar, textvariable=self._port_var, width=110,
+            font=ctk.CTkFont(size=12), fg_color=CLR_CARD, border_color=CLR_BORDER,
+        ).grid(row=row, column=0, padx=16, pady=(0, 8), sticky="w"); row += 1
 
         self._sep(sidebar, row); row += 1
 
         # Start / Stop button
         self._btn = ctk.CTkButton(
             sidebar, text="▶   Запустить",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            height=44, corner_radius=8,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            height=40, corner_radius=8,
             fg_color=CLR_BTN_START, hover_color=CLR_BTN_HOV_S,
             command=self._toggle,
         )
-        self._btn.grid(row=row, column=0, padx=20, pady=16, sticky="ew"); row += 1
+        self._btn.grid(row=row, column=0, padx=16, pady=12, sticky="ew"); row += 1
 
-        # Spacer pushes remaining widgets to bottom
+        # ── Spacer: pushes stats block to bottom ──
         ctk.CTkLabel(sidebar, text="").grid(row=99, column=0)
 
         self._sep(sidebar, 100); row = 101
 
         # Stats
         ctk.CTkLabel(
-            sidebar, text="СТАТИСТИКА", font=ctk.CTkFont(size=10, weight="bold"),
+            sidebar, text="СТАТИСТИКА", font=ctk.CTkFont(size=9, weight="bold"),
             text_color=CLR_MUTED
-        ).grid(row=row, column=0, padx=20, pady=(12, 4), sticky="w"); row += 1
+        ).grid(row=row, column=0, padx=16, pady=(8, 2), sticky="w"); row += 1
 
-        self._req_lbl   = self._stat_row(sidebar, row, "Запросов:",  "0");     row += 1
-        self._uptime_lbl = self._stat_row(sidebar, row, "Аптайм:",   "—");     row += 1
+        self._req_lbl    = self._stat_row(sidebar, row, "Запросов:", "0"); row += 1
+        self._uptime_lbl = self._stat_row(sidebar, row, "Аптайм:",   "—"); row += 1
 
         self._sep(sidebar, row); row += 1
 
         # GPU info
         ctk.CTkLabel(
-            sidebar, text="СИСТЕМА", font=ctk.CTkFont(size=10, weight="bold"),
+            sidebar, text="СИСТЕМА", font=ctk.CTkFont(size=9, weight="bold"),
             text_color=CLR_MUTED
-        ).grid(row=row, column=0, padx=20, pady=(12, 4), sticky="w"); row += 1
+        ).grid(row=row, column=0, padx=16, pady=(8, 2), sticky="w"); row += 1
 
-        self._gpu_name_lbl  = self._stat_row(sidebar, row, "GPU:", "Нет"); row += 1
-        self._gpu_vram_lbl  = self._stat_row(sidebar, row, "VRAM:", "—");  row += 1
+        self._gpu_name_lbl = self._stat_row(sidebar, row, "GPU:",  "Нет"); row += 1
+        self._gpu_vram_lbl = self._stat_row(sidebar, row, "VRAM:", "—");   row += 1
 
-        ctk.CTkLabel(sidebar, text="").grid(row=row, column=0, pady=8)  # bottom padding
+        ctk.CTkLabel(sidebar, text="").grid(row=row, column=0, pady=6)
 
         # ── Right panel — logs ────────────────────────────────────────────────
         right = ctk.CTkFrame(self, fg_color=CLR_BG, corner_radius=0)
@@ -360,12 +360,13 @@ class App(ctk.CTk):
     @staticmethod
     def _stat_row(parent, row, label: str, value: str) -> ctk.CTkLabel:
         f = ctk.CTkFrame(parent, fg_color="transparent")
-        f.grid(row=row, column=0, padx=20, pady=1, sticky="ew")
+        f.grid(row=row, column=0, padx=16, pady=1, sticky="ew")
+        f.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(f, text=label, font=ctk.CTkFont(size=11),
-                     text_color=CLR_MUTED, width=70, anchor="w").pack(side="left")
+                     text_color=CLR_MUTED, width=72, anchor="w").grid(row=0, column=0, sticky="w")
         lbl = ctk.CTkLabel(f, text=value, font=ctk.CTkFont(size=11),
                            text_color=CLR_TEXT, anchor="w")
-        lbl.pack(side="left")
+        lbl.grid(row=0, column=1, sticky="w")
         return lbl
 
 
