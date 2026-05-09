@@ -60,6 +60,7 @@ hiddenimports = [
 
 EXCLUDE_DLL_PATTERNS = [
     # FFT / sparse / dense-solver — not used in CNN inference
+    # (verified safe: torch_cuda.dll does NOT import these directly)
     "cufft64*",
     "cufftw64*",
     "cusolver64*",
@@ -73,21 +74,16 @@ EXCLUDE_DLL_PATTERNS = [
     "caffe2_nvrtc*",
     "nvfuser_codegen*",
 
-    # cuDNN extras not needed for plain CNN (RegNet)
-    # cudnn_engines_precompiled: precompiled plans; cuDNN falls back to
-    # runtime compilation via cudnn_engines_runtime_compiled (kept, 19 MB)
+    # cuDNN precompiled engine plans — cuDNN falls back to runtime
+    # compilation via cudnn_engines_runtime_compiled64 (kept, 19 MB).
+    # Safe: no other DLL imports from this one.
     "cudnn_engines_precompiled64*",
-    # cudnn_adv: RNN / multi-head-attention — not used by RegNet
-    "cudnn_adv64*",
 
-    # Random-number generator — training only
-    "curand64*",
-
-    # NVIDIA JPEG (we use Pillow) and profiling tools
-    "nvjpeg64*",
-    "cupti64*",
-    "nvperf_host*",
-    "nvperf_target*",
+    # Standalone NVIDIA tools — not imported by any torch DLL
+    "nvjpeg64*",        # NVIDIA JPEG encoder (we use Pillow)
+    "cupti64*",         # CUDA Profiling Tools Interface
+    "nvperf_host*",     # Nsight profiler host
+    "nvperf_target*",   # Nsight profiler target
 
     # Per-arch CUDA kernels blob (kept torch_cuda.dll itself)
     "torch_cuda_cu*",
