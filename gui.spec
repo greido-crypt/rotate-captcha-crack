@@ -59,15 +59,40 @@ hiddenimports = [
 #  mkl_avx*  — Intel AVX math variants       (redundant with base mkl)
 
 EXCLUDE_DLL_PATTERNS = [
+    # FFT / sparse / dense-solver — not used in CNN inference
     "cufft64*",
     "cufftw64*",
     "cusolver64*",
+    "cusolverMg64*",
     "cusparse64*",
+
+    # JIT / runtime compilation — we don't use torch.compile on Windows
     "nvrtc64*",
     "nvrtc-builtins64*",
+    "nvJitLink*",
     "caffe2_nvrtc*",
     "nvfuser_codegen*",
-    "torch_cuda_cu*",           # per-arch CUDA kernels (kept torch_cuda.dll)
+
+    # cuDNN extras not needed for plain CNN (RegNet)
+    # cudnn_engines_precompiled: precompiled plans; cuDNN falls back to
+    # runtime compilation via cudnn_engines_runtime_compiled (kept, 19 MB)
+    "cudnn_engines_precompiled64*",
+    # cudnn_adv: RNN / multi-head-attention — not used by RegNet
+    "cudnn_adv64*",
+
+    # Random-number generator — training only
+    "curand64*",
+
+    # NVIDIA JPEG (we use Pillow) and profiling tools
+    "nvjpeg64*",
+    "cupti64*",
+    "nvperf_host*",
+    "nvperf_target*",
+
+    # Per-arch CUDA kernels blob (kept torch_cuda.dll itself)
+    "torch_cuda_cu*",
+
+    # Redundant Intel MKL variants (base mkl + libiomp5md kept)
     "mkl_avx*",
     "mkl_def*",
     "mkl_mc*",
@@ -93,6 +118,8 @@ a = Analysis(
     excludes=[
         # Training-only Python packages
         "matplotlib", "tqdm", "IPython", "jupyter", "notebook", "pytest",
+        # aiohttp — replaced by FastAPI/uvicorn, still installed in venv
+        "aiohttp", "aiosignal", "frozenlist", "multidict", "yarl",
         # Training modules inside rotate_captcha_crack
         "rotate_captcha_crack.criterion",
         "rotate_captcha_crack.loss",
@@ -107,6 +134,15 @@ a = Analysis(
         "torch.fx",
         "torch.ao",
         "torch.backends.xnnpack",
+        "torch.optim",
+        "torch.profiler",
+        "torch.export",
+        "torch._dynamo",
+        "torch._inductor",
+        # Unused stdlib
+        "unittest", "pdb", "doctest", "difflib",
+        "xml", "xmlrpc",
+        "tkinter.test",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
