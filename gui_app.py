@@ -300,10 +300,17 @@ class App(ctk.CTk):
     # ── Image saving ──────────────────────────────────────────────────────────
 
     def _on_save_toggle(self):
-        if self._save_var.get() and not self._mgr.save_dir:
-            self._pick_save_dir()
-        if not self._save_var.get():
+        if self._save_var.get():
+            # Switched ON — ask for folder only if none selected yet
+            if not self._mgr.save_dir:
+                self._pick_save_dir()
+            # If user closed dialog without picking, revert toggle to OFF
+            if not self._mgr.save_dir:
+                self._save_var.set(False)
+        else:
+            # Switched OFF — clear save dir
             self._mgr.save_dir = None
+            self._save_dir_lbl.configure(text="Папка не выбрана", text_color=CLR_MUTED)
 
     def _pick_save_dir(self):
         d = filedialog.askdirectory(title="Выберите папку для сохранения изображений")
